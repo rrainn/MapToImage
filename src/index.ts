@@ -1,5 +1,6 @@
 import * as sharp from "sharp";
 import * as axios from "axios";
+import * as Jimp from "jimp";
 
 export interface MapToImageSettings {
 	/**
@@ -52,21 +53,28 @@ export interface MapToImageSettings {
 		 *
 		 * The layers will be layered on top of each other in the order they are in the array. Meaning the first layer in the array will be on the bottom, and the last layer in the array will be on the top.
 		 *
+		 * You can also pass in an array of objects with each object containing a `url` (string) & `opacity` (number) property. The `url` property will be the URL of the tile server, and the `opacity` property will be the opacity of the layer. The opacity property is optional and defaults to `1`.
+		 *
 		 * @example ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"]
 		 */
-		"layers": string[]
+		"layers": (string | {"url": string, "opacity"?: number})[]
 	}
 }
 
 function downloadTileURL(url: string, x: number, y: number, z: number) {
 	return url.replace("{x}", x.toString()).replace("{y}", y.toString()).replace("{z}", z.toString());
 }
-async function downloadTile(url: string) {
+async function downloadTile(url: string, opacity: number) {
 	console.log("Fetching tile: " + url);
 	const result = await axios.default.get(url, {
 		"responseType": "arraybuffer"
 	});
-	const buffer = Buffer.from(result.data, "binary");
+	let buffer: Buffer = Buffer.from(result.data, "binary");
+	if (opacity !== 1) {
+		const image = await Jimp.read(buffer);
+		image.opacity(opacity);
+		buffer = await image.getBufferAsync(Jimp.MIME_PNG);
+	}
 	return buffer;
 }
 
@@ -102,7 +110,7 @@ export async function mapToImage(settings: MapToImageSettings) {
 		"y": settings.image.dimensions.height / 2
 	};
 
-	let images: { input: string, left: number, top: number }[] = [];
+	let images: { input: string, left: number, top: number, opacity: number }[] = [];
 
 	for (const layer of settings.map.layers) {
 		const tile = coordinatesToTile(settings.map.center.lat, settings.map.center.lng, settings.map.zoom);
@@ -111,11 +119,14 @@ export async function mapToImage(settings: MapToImageSettings) {
 			"y": (tile.y - Math.floor(tile.y)) * 256
 		};
 
+		const layerURL = typeof layer === "string" ? layer : layer.url;
+		const layerOpacity = typeof layer === "string" ? 1 : (layer.opacity ?? 1);
 		function createImageObject(x: number, y: number, zoom: number, left: number, top: number) {
 			return {
-				"input": downloadTileURL(layer, Math.floor(x), Math.floor(y), zoom),
+				"input": downloadTileURL(layerURL, Math.floor(x), Math.floor(y), zoom),
 				"left": left,
-				"top": top
+				"top": top,
+				"opacity": layerOpacity,
 			};
 		}
 
@@ -167,7 +178,7 @@ export async function mapToImage(settings: MapToImageSettings) {
 	}).map(async (img) => {
 		return {
 			...img,
-			"input": await downloadTile(img.input)
+			"input": await downloadTile(img.input, img.opacity)
 		}
 	})));
 

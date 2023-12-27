@@ -14,8 +14,10 @@ npm install maptoimage
 
 ```js
 const { mapToImage } = require("maptoimage");
+const fs = require("fs");
+
 (async () => {
-	mapToImage({
+	const img = mapToImage({
 		"image": {
 			"dimensions": {
 				"width": 1280,
@@ -35,6 +37,7 @@ const { mapToImage } = require("maptoimage");
 			]
 		}
 	});
+	fs.writeFileSync("map.png", img.png().toBuffer());
 })();
 ```
 

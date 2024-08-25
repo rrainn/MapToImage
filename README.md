@@ -34,6 +34,10 @@ const fs = require("fs");
 				"https://tile.openstreetmap.org/{z}/{x}/{y}.png",
 				// https://mesonet.agron.iastate.edu/GIS/ridge.phtml
 				"https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::USCOMP-N0Q-0/{z}/{x}/{y}.png",
+				async (z, x, y) => {
+					const buffer = await fs.promises.readFile("tile.png");
+					return buffer;
+				}
 			]
 		}
 	});

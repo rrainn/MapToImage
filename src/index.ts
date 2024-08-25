@@ -57,7 +57,7 @@ export interface MapToImageSettings {
 		 *
 		 * @example ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"]
 		 */
-		"layers": (string | {"url": string, "opacity"?: number})[]
+		"layers": (string | {"url": string, "opacity"?: number} | ((z: number, x: number, y: number) => Buffer | Promise<Buffer>))[]
 	}
 }
 
@@ -110,7 +110,7 @@ export async function mapToImage(settings: MapToImageSettings) {
 		"y": settings.image.dimensions.height / 2
 	};
 
-	let images: { input: string, left: number, top: number, opacity: number }[] = [];
+	let images: { input: string | (() => Buffer | Promise<Buffer>), left: number, top: number, opacity: number }[] = [];
 
 	for (const layer of settings.map.layers) {
 		const tile = coordinatesToTile(settings.map.center.lat, settings.map.center.lng, settings.map.zoom);
@@ -119,15 +119,24 @@ export async function mapToImage(settings: MapToImageSettings) {
 			"y": (tile.y - Math.floor(tile.y)) * 256
 		};
 
-		const layerURL = typeof layer === "string" ? layer : layer.url;
-		const layerOpacity = typeof layer === "string" ? 1 : (layer.opacity ?? 1);
 		function createImageObject(x: number, y: number, zoom: number, left: number, top: number) {
-			return {
-				"input": downloadTileURL(layerURL, Math.floor(x), Math.floor(y), zoom),
-				"left": left,
-				"top": top,
-				"opacity": layerOpacity,
-			};
+			if (typeof layer === "function") {
+				return {
+					"input": (): Buffer | Promise<Buffer> => layer(zoom, x, y),
+					"left": left,
+					"top": top,
+					"opacity": 1
+				}
+			} else {
+				const layerURL = typeof layer === "string" ? layer : layer.url;
+				const layerOpacity = typeof layer === "string" ? 1 : (layer.opacity ?? 1);
+				return {
+					"input": downloadTileURL(layerURL, Math.floor(x), Math.floor(y), zoom),
+					"left": left,
+					"top": top,
+					"opacity": layerOpacity,
+				};
+			}
 		}
 
 		const img = createImageObject(tile.x, tile.y, settings.map.zoom, Math.round((imageCenter.x - (256 / 2))) + Math.round((256 / 2) - offsetOfCoordinates.x), Math.round((imageCenter.y - (256 / 2))) + Math.round((256 / 2) - offsetOfCoordinates.y));
@@ -178,7 +187,7 @@ export async function mapToImage(settings: MapToImageSettings) {
 	}).map(async (img) => {
 		return {
 			...img,
-			"input": await downloadTile(img.input, img.opacity)
+			"input": typeof img.input === "string" ? await downloadTile(img.input, img.opacity) : await img.input()
 		}
 	})));
 

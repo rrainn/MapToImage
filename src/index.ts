@@ -122,7 +122,7 @@ export async function mapToImage(settings: MapToImageSettings) {
 		function createImageObject(x: number, y: number, zoom: number, left: number, top: number) {
 			if (typeof layer === "function") {
 				return {
-					"input": (): Buffer | Promise<Buffer> => layer(zoom, x, y),
+					"input": (): Buffer | Promise<Buffer> => layer(zoom, Math.floor(x), Math.floor(y)),
 					"left": left,
 					"top": top,
 					"opacity": 1

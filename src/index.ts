@@ -110,9 +110,11 @@ export async function mapToImage(settings: MapToImageSettings) {
 		"y": settings.image.dimensions.height / 2
 	};
 
-	let images: { input: string | (() => Buffer | Promise<Buffer>), left: number, top: number, opacity: number }[] = [];
+	let images: { input: string | (() => Buffer | Promise<Buffer>), left: number, top: number, opacity: number, layerIndex: number }[] = [];
 
-	for (const layer of settings.map.layers) {
+	for (const index in settings.map.layers) {
+		const layer = settings.map.layers[index];
+		const layerNumber = parseInt(index);
 		const tile = coordinatesToTile(settings.map.center.lat, settings.map.center.lng, settings.map.zoom);
 		const offsetOfCoordinates = {
 			"x": (tile.x - Math.floor(tile.x)) * 256,
@@ -125,7 +127,8 @@ export async function mapToImage(settings: MapToImageSettings) {
 					"input": (): Buffer | Promise<Buffer> => layer(zoom, Math.floor(x), Math.floor(y)),
 					"left": left,
 					"top": top,
-					"opacity": 1
+					"opacity": 1,
+					"layerIndex": layerNumber
 				}
 			} else {
 				const layerURL = typeof layer === "string" ? layer : layer.url;
@@ -135,6 +138,7 @@ export async function mapToImage(settings: MapToImageSettings) {
 					"left": left,
 					"top": top,
 					"opacity": layerOpacity,
+					"layerIndex": layerNumber
 				};
 			}
 		}
@@ -182,7 +186,8 @@ export async function mapToImage(settings: MapToImageSettings) {
 
 	image = image.composite(await Promise.all(images.filter((img, _index, array) => {
 		return array.findIndex((img2) => {
-			return img2.input === img.input;
+			// If we are getting the same layer at the same position, filter it out.
+			return img2.layerIndex == img.layerIndex && img2.top == img.top && img2.left == img.left;
 		}) === _index;
 	}).map(async (img) => {
 		return {

@@ -1,6 +1,8 @@
 import * as sharp from "sharp";
 import * as axios from "axios";
 import * as Jimp from "jimp";
+import downloadTileURL from "./downloadTileURL";
+import coordinatesToTile from "./coordinatesToTile";
 
 export interface MapToImageSettings {
 	/**
@@ -61,9 +63,6 @@ export interface MapToImageSettings {
 	}
 }
 
-function downloadTileURL(url: string, x: number, y: number, z: number) {
-	return url.replace("{x}", x.toString()).replace("{y}", y.toString()).replace("{z}", z.toString());
-}
 async function downloadTile(url: string, opacity: number) {
 	console.log("Fetching tile: " + url);
 	const result = await axios.default.get(url, {
@@ -76,18 +75,6 @@ async function downloadTile(url: string, opacity: number) {
 		buffer = await image.getBufferAsync(Jimp.MIME_PNG);
 	}
 	return buffer;
-}
-
-function coordinatesToTile(lat: number, lng: number, zoom: number) {
-	const n = Math.pow(2, zoom);
-	const x = (n * ((lng + 180) / 360));
-	const latRad = lat * Math.PI / 180;
-	const y = (n * (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2);
-
-	return {
-		x,
-		y
-	};
 }
 
 export async function mapToImage(settings: MapToImageSettings) {

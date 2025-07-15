@@ -4,6 +4,30 @@ import * as Jimp from "jimp";
 import downloadTileURL from "./downloadTileURL";
 import coordinatesToTile from "./coordinatesToTile";
 
+const DEFAULT_RETRY_OPTIONS: RetryOptions = {
+	"times": 0,
+	"delay": 0
+};
+interface RetryOptions {
+	/**
+	 * The number of times to retry the request if it fails.
+	 * Defaults to 0 (no retries).
+	 */
+	"times"?: number,
+	/**
+	 * The delay between retries in milliseconds.
+	 * Defaults to 0.
+	 */
+	"delay"?: number
+}
+
+type Layer = string | {
+	"url": string,
+	"opacity"?: number,
+	"fallback"?: ((z: number, x: number, y: number) => Buffer | Promise<Buffer>),
+	"retry"?: RetryOptions
+} | ((z: number, x: number, y: number) => Buffer | Promise<Buffer>);
+
 export interface MapToImageSettings {
 	/**
 	 * The image settings.
@@ -59,22 +83,46 @@ export interface MapToImageSettings {
 		 *
 		 * @example ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"]
 		 */
-		"layers": (string | {"url": string, "opacity"?: number} | ((z: number, x: number, y: number) => Buffer | Promise<Buffer>))[]
+		"layers": Layer[]
 	}
 }
 
-async function downloadTile(url: string, opacity: number) {
+async function timeout(ms: number): Promise<void> {
+	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function downloadTile(url: string, opacity: number, retry: RetryOptions) {
 	console.log("Fetching tile: " + url);
-	const result = await axios.default.get(url, {
-		"responseType": "arraybuffer"
-	});
-	let buffer: Buffer = Buffer.from(result.data, "binary");
-	if (opacity !== 1) {
-		const image = await Jimp.read(buffer);
-		image.opacity(opacity);
-		buffer = await image.getBufferAsync(Jimp.MIME_PNG);
+	async function run(url: string, opacity: number) {
+		const result = await axios.default.get(url, {
+			"responseType": "arraybuffer"
+		});
+		let buffer: Buffer = Buffer.from(result.data, "binary");
+		if (opacity !== 1) {
+			const image = await Jimp.read(buffer);
+			image.opacity(opacity);
+			buffer = await image.getBufferAsync(Jimp.MIME_PNG);
+		}
+		return buffer;
 	}
-	return buffer;
+
+	let totalAttempts = 0;
+	const maxAttempts = 1 + (retry.times || 0); // We always want to try at least once.
+
+	while (totalAttempts < maxAttempts) {
+		try {
+			const buffer = await run(url, opacity);
+			return buffer;
+		} catch (error) {
+			totalAttempts++;
+			if (retry.delay) {
+				await timeout(retry.delay);
+			}
+		}
+	}
+
+	console.error("Failed to download tile after " + totalAttempts + " attempts: " + url);
+	throw new Error("Failed to download tile after " + totalAttempts + " attempts: " + url);
 }
 
 export async function mapToImage(settings: MapToImageSettings) {
@@ -97,7 +145,7 @@ export async function mapToImage(settings: MapToImageSettings) {
 		"y": settings.image.dimensions.height / 2
 	};
 
-	let images: { input: string | (() => Buffer | Promise<Buffer>), left: number, top: number, opacity: number, layerIndex: number }[] = [];
+	let images: ({ input: (() => Buffer | Promise<Buffer>), left: number, top: number, opacity: number, layerIndex: number, fallback: (() => Buffer | Promise<Buffer>) | undefined } | { input: string, left: number, top: number, opacity: number, layerIndex: number, retry: RetryOptions, fallback: (() => Buffer | Promise<Buffer>) | undefined })[] = [];
 
 	for (const index in settings.map.layers) {
 		const layer = settings.map.layers[index];
@@ -115,17 +163,21 @@ export async function mapToImage(settings: MapToImageSettings) {
 					"left": left,
 					"top": top,
 					"opacity": 1,
-					"layerIndex": layerNumber
+					"layerIndex": layerNumber,
+					"fallback": undefined
 				}
 			} else {
 				const layerURL = typeof layer === "string" ? layer : layer.url;
 				const layerOpacity = typeof layer === "string" ? 1 : (layer.opacity ?? 1);
+				const fallbackFunction = typeof layer === "object" ? layer.fallback : undefined;
 				return {
 					"input": downloadTileURL(layerURL, Math.floor(x), Math.floor(y), zoom),
 					"left": left,
 					"top": top,
 					"opacity": layerOpacity,
-					"layerIndex": layerNumber
+					"layerIndex": layerNumber,
+					"retry": typeof layer === "object" ? (layer.retry ?? DEFAULT_RETRY_OPTIONS) : DEFAULT_RETRY_OPTIONS,
+					"fallback": fallbackFunction ? ((): Buffer | Promise<Buffer> => fallbackFunction(zoom, Math.floor(x), Math.floor(y))) : undefined
 				};
 			}
 		}
@@ -177,9 +229,20 @@ export async function mapToImage(settings: MapToImageSettings) {
 			return img2.layerIndex == img.layerIndex && img2.top == img.top && img2.left == img.left;
 		}) === _index;
 	}).map(async (img) => {
+		let buffer: Buffer;
+		try {
+			if (typeof img.input === "string") {
+				const retryOptions = "retry" in img ? img.retry : DEFAULT_RETRY_OPTIONS;
+				buffer = await downloadTile(img.input, img.opacity, retryOptions);
+			} else {
+				buffer = await img.input();
+			}
+		} catch (error) {
+			buffer = await img.fallback?.() ?? await (await Jimp.read(Buffer.alloc(256 * 256 * 4, 0))).getBufferAsync(Jimp.MIME_PNG);
+		}
 		return {
 			...img,
-			"input": typeof img.input === "string" ? await downloadTile(img.input, img.opacity) : await img.input()
+			"input": buffer
 		}
 	})));
 
